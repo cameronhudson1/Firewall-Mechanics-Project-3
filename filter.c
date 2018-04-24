@@ -260,12 +260,31 @@ bool filter_packet(IpPktFilter filter, unsigned char* pkt){
    	unsigned int dstIpAddr;
    	FilterConfig* fltCfg = (FilterConfig*)filter;
 	
-	srcIpAddr = extractSrcAddrFromIpHeader(pkt);
-	dstIpAddr = extractDstAddrFromIpHeader(pkt);
+	srcIpAddr = ExtractSrcAddrFromIpHeader(pkt);
+	dstIpAddr = ExtractDstAddrFromIpHeader(pkt);
+	
 	unsigned int ipProtocol = extractIpProtocol(pkt);
+	unsigned int tcp;
+	unsigned int icmp;
 	
+	if(!packet_is_inbound(fltCfg, srcIpAddr, dstIpAddr)){
+		return false;
+	}
 	
+	if(ipProtocol == IP_PROTOCOL_TCP){
+		tcp = ExtractTcpDstPort(pkt);
+		if(block_inbound_tcp_port(fltCfg, tcp)){
+			return false;
+		}
+	}
+
+	if(ipProtocol == IP_PROTOCOL_ICMP){
+		icmp = ExtractIcmpType(pkt);
+		if(fltCfg->blockInbounfEchoReq){
+			return false;
+		}
+	}
 	
-  	return true;
+  	return vlock_ip_address(fltCfg, srcIpAddr);
 }
 
