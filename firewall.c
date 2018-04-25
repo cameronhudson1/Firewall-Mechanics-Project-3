@@ -163,16 +163,25 @@ static bool open_pipes( FWSpec_T * spec_ptr)
 /// @param buf Destination buffer for storing the packet
 /// @param buflen The length of the supplied destination buffer
 /// @return length of the packet or -1 for error
-static int read_packet(FILE * in_pipe, unsigned char* buf, int buflen )
-{
-   int numRead = 0;
-   int numBytes = -1;
+static int read_packet(FILE * in_pipe, unsigned char* buf, int buflen ){
+   	int numRead = 0;
+   	int numBytes = -1;
 
-   int len_read = -1; // assume error
+   	int len_read = -1; // assume error
+	
+	// Get numBytes
+	numRead = fread(&numBytes, 4, 1, in_pipe);
+	
+	numRead = assert(numBytes <= bufLen);
+	len_read++;	
 
-   //TODO: student implements filter_thread()
-
-   return len_read;
+	// Iterate over numBytes
+	for(int i = 0; i < numBytes; i++){
+		numRead = fread(&buf[i], 1, 1, in_pipe);
+		len_read++;
+	}
+	
+   	return len_read;
 }
 
 
@@ -184,28 +193,46 @@ static int read_packet(FILE * in_pipe, unsigned char* buf, int buflen )
 /// @param args pointer to an FWSpec_T structure
 /// @return pointer to static exit status value which is 0 on success
 
-static void * filter_thread(void* args)
-{
-   unsigned char pktBuf[MAX_PKT_LENGTH];
-   bool success;
-   int length;
+static void * filter_thread(void* args){
+   	unsigned char pktBuf[MAX_PKT_LENGTH];
+   	bool allow;
+   	int length;
 
-   static int status = EXIT_FAILURE; // static for return persistence
+   	static int status = EXIT_FAILURE; // static for return persistence
 
-   status = EXIT_FAILURE; // reset
+   	status = EXIT_FAILURE; // reset
 
-   FWSpec_T * spec_p = NULL;
+   	FWSpec_T * spec_p = (FWSpec_t*) args;
+	FILE * inPipe = fopen((spec_p->pipes)->in_pipe);
+	FILE * outPipe = fopen((spec_p->pipes)->out_pipe);
+	
+	length = read_packet(inPipe, pktBuf, MAX_PKT_LENGTH);
+	
+	//Set allow flag based on MODE
+	switch(MODE){
+		case MODE_BLOCK_ALL:
+			allow = false;
+		case MODE_ALLOW_ALL:
+			allow = true;
+		case FILTER:
+			allow = filter_packet(spec_p->filter, pktBuf);
+	}
+	
+	//If the packet is allowed, write it
+	if(allow){
+		fwrite(opktBuf, 1, length, outPipe);
+	}
+	
+	fflush(inPipe);
+	fflush(outPipe);
+	
+	// end of thread is never reached when there is a cancellation.
+   	printf( "fw: thread is deleting filter data.\n"); fflush( stdout);
+   	tsd_destroy( (void *)spec_p);
+   	printf("fw: thread returning. status: %d\n", status);
+   	fflush( stdout);
 
-   //TODO: student implements filter_thread()
-
-
-   // end of thread is never reached when there is a cancellation.
-   printf( "fw: thread is deleting filter data.\n"); fflush( stdout);
-   tsd_destroy( (void *)spec_p);
-   printf("fw: thread returning. status: %d\n", status);
-   fflush( stdout);
-
-   pthread_exit( &status);
+   	pthread_exit( &status);
 }
 
 
