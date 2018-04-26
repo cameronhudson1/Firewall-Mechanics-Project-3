@@ -60,7 +60,7 @@ static void parse_remainder_of_string_for_ip(unsigned int* ipAddr)
 /// @param addr The IP address that is to be checked
 /// @return True if the IP address is to be blocked
 static bool block_ip_address(FilterConfig* fltCfg, unsigned int addr){
-	for(int i = 0; i < numBlockedIpAddresses; i++){
+	for(int i = 0; i < fltCfg->numBlockedIpAddresses; i++){
 		if(fltCfg->blockedIpAddresses[i] == addr){
 			return true;  //IP was meant to be blocked, return true
 		}

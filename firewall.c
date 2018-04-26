@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>     /* read library call comes from here */
+#include <string.h>
 
 #include "filter.h"
 
@@ -139,8 +140,7 @@ static void init_sig_handlers() {
 /// Open the input and output streams used for reading and writing packets.
 /// @param spec_ptr structure contains input and output stream names.
 /// @return true if successful
-static bool open_pipes( FWSpec_T * spec_ptr)
-{
+static bool open_pipes( FWSpec_T * spec_ptr){
    spec_ptr->pipes.in_pipe = fopen( spec_ptr->in_file, "rb");
    if(spec_ptr->pipes.in_pipe == NULL)
    {
@@ -172,7 +172,12 @@ static int read_packet(FILE * in_pipe, unsigned char* buf, int buflen ){
 	// Get numBytes
 	numRead = fread(&numBytes, 4, 1, in_pipe);
 	
-	numRead = assert(numBytes <= bufLen);
+	if(numBytes > buflen){
+		fprintf(stderr, "Packet is too long!\n");
+		return EXIT_FAILURE;
+	}
+	
+	numBytes++;
 	len_read++;	
 
 	// Iterate over numBytes
@@ -202,29 +207,31 @@ static void * filter_thread(void* args){
 
    	status = EXIT_FAILURE; // reset
 
-   	FWSpec_T * spec_p = (FWSpec_t*) args;
-	FILE * inPipe = fopen((spec_p->pipes)->in_pipe);
-	FILE * outPipe = fopen((spec_p->pipes)->out_pipe);
+   	FWSpec_T* spec_p = (FWSpec_T*)args;
+	open_pipes(spec_p);
 	
-	length = read_packet(inPipe, pktBuf, MAX_PKT_LENGTH);
+	while(NOT_CANCELLED != 0){
+		status = EXIT_SUCCESS;
+		length = read_packet((spec_p->pipes).in_pipe, pktBuf, MAX_PKT_LENGTH);
 	
-	//Set allow flag based on MODE
-	switch(MODE){
-		case MODE_BLOCK_ALL:
-			allow = false;
-		case MODE_ALLOW_ALL:
-			allow = true;
-		case FILTER:
-			allow = filter_packet(spec_p->filter, pktBuf);
+		//Set allow flag based on MODE
+		switch(MODE){
+			case MODE_BLOCK_ALL:
+				allow = false;
+			case MODE_ALLOW_ALL:
+				allow = true;
+			case MODE_FILTER:
+				allow = filter_packet(spec_p->filter, pktBuf);
+		}
+		
+		//If the packet is allowed, write it
+		if(allow){
+			fwrite(pktBuf, 1, length, (spec_p->pipes).out_pipe);
+		}
+		
+		fflush((spec_p->pipes).in_pipe);
+		fflush((spec_p->pipes).out_pipe);
 	}
-	
-	//If the packet is allowed, write it
-	if(allow){
-		fwrite(opktBuf, 1, length, outPipe);
-	}
-	
-	fflush(inPipe);
-	fflush(outPipe);
 	
 	// end of thread is never reached when there is a cancellation.
    	printf( "fw: thread is deleting filter data.\n"); fflush( stdout);
@@ -254,39 +261,76 @@ static void display_menu(void)
 /// @param argc Number of command line arguments; 1 expected
 /// @param argv Command line arguments; name of the configuration file
 /// @return EXIT_SUCCESS or EXIT_FAILURE
-int main(int argc, char* argv[])
-{
-   int command;
-   bool done = false;
+int main(int argc, char* argv[]){
+   	int command;
+   	bool done = false;
+	char* ferror;
+	char buf[MAX_PKT_LENGTH];
 
-   // print usage message if no arguments
-   if(argc < 2)
-   {
-      fprintf(stderr, "usage: %s configFileName\n", argv[0]);
-      return EXIT_FAILURE;
-   }
+   	// print usage message if no arguments
+   	if(argc < 2){
+      	fprintf(stderr, "usage: %s configFileName\n", argv[0]);
+    	return EXIT_FAILURE;
+   	}
 
-   init_sig_handlers();
+   	init_sig_handlers();
+	printf("fw: starting filter thread.\n");
+	display_menu();
+	
+	// Activate super FilterConfig generation
+	IpPktFilter filter = create_filter();
+	bool success = configure_filter(filter, argv[1]);
+	if(!success){
+		fprintf(stderr, "Error reading from config file\n");
+		return EXIT_FAILURE;
+	}
+	
+	fw_spec.config_file = argv[1];
+	fw_spec.in_file = "toFirewall";
+	fw_spec.out_file = "fromFirewall";
+	fw_spec.filter = filter;
+	Pipes_T pipes;
+	fw_spec.pipes = pipes;
+	pthread_create(&tid_filter, NULL, filter_thread, (void*)&fw_spec);
+		
+	while((ferror = fgets(buf, 256, stdin)) != NULL){
+		if(strcmp(buf, "0") == 0){
+			//Input was "0" (EXIT)
+			NOT_CANCELLED = 0;
+			printf("Exiting\n");
+			break;
+		} else if(strcmp(buf, "1") == 0){
+			//Input was "1" (BLOCK)
+			MODE = MODE_BLOCK_ALL;
+			printf("Switching to blocking mode\n");
+		} else if(strcmp(buf, "2") == 0) {
+			//Input was "2" (ALLOW)
+			MODE = MODE_ALLOW_ALL;
+			printf("Switching to allow mode\n");
+		} else if(strcmp(buf, "3") == 0) {
+			//Input was "3" (Filter)
+			MODE = MODE_FILTER;
+			printf("Switching to filtering mode\n");
+		} else{
+			//Input was not a known value
+			printf("Unknown argument\n");
+		}
+	}
+		
+   	printf( "fw: main is joining the thread.\n"); fflush( stdout);
 
-   //TODO: student implements main()
+   	// wait for the filter thread to terminate
+   	void * retval = NULL;
+   	int joinResult = pthread_join(tid_filter, &retval);
+   	if( joinResult != 0){
+      	printf( "fw: main Error: unexpected joinResult: %d\n", joinResult);
+      	fflush( stdout);
+   	}
+   	if ( (void*)retval == PTHREAD_CANCELED ){
+      	printf( "fw: main confirmed that the thread was canceled.\n");
+   	}
 
-
-   printf( "fw: main is joining the thread.\n"); fflush( stdout);
-
-   // wait for the filter thread to terminate
-   void * retval = NULL;
-   int joinResult = pthread_join(tid_filter, &retval);
-   if( joinResult != 0)
-   {
-      printf( "fw: main Error: unexpected joinResult: %d\n", joinResult);
-      fflush( stdout);
-   }
-   if ( (void*)retval == PTHREAD_CANCELED )
-   {
-      printf( "fw: main confirmed that the thread was canceled.\n");
-   }
-
-   printf( "fw: main returning.\n"); fflush( stdout);
-   return EXIT_SUCCESS;
+   	printf( "fw: main returning.\n"); fflush( stdout);
+   	return EXIT_SUCCESS;
 }
 
