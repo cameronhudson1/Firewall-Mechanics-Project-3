@@ -40,8 +40,7 @@ typedef struct FilterConfig_S{
 /// @param ipAddr The destination into which to store the octets
 /// @pre caller must have first called strtok to set its pointer.
 /// @post ipAddr contains the ip address found in the string
-static void parse_remainder_of_string_for_ip(unsigned int* ipAddr)
-{
+static void parse_remainder_of_string_for_ip(unsigned int* ipAddr){
    char* pToken;
 
    pToken = strtok(NULL, ".");
@@ -60,7 +59,7 @@ static void parse_remainder_of_string_for_ip(unsigned int* ipAddr)
 /// @param addr The IP address that is to be checked
 /// @return True if the IP address is to be blocked
 static bool block_ip_address(FilterConfig* fltCfg, unsigned int addr){
-	for(int i = 0; i < fltCfg->numBlockedIpAddresses; i++){
+	for(unsigned int i = 0; i < fltCfg->numBlockedIpAddresses; i++){
 		if(fltCfg->blockedIpAddresses[i] == addr){
 			return true;  //IP was meant to be blocked, return true
 		}
@@ -74,8 +73,8 @@ static bool block_ip_address(FilterConfig* fltCfg, unsigned int addr){
 /// @param port The TCP port that is to be checked
 /// @return True if the TCP port is to be blocked
 static bool block_inbound_tcp_port(FilterConfig* fltCfg, unsigned int port){
-	for(int i = 0; i < fltCfg->numBlockedTcpPorts; i++){
-		if(fltCfg->blockedTcpPorts[i] == port){
+	for(unsigned int i = 0; i < fltCfg->numBlockedInboundTcpPorts; i++){
+		if(fltCfg->blockedInboundTcpPorts[i] == port){
 			return true;	//tcpPort was meant to be blocked, return true
 		}
 	}
@@ -91,8 +90,10 @@ static bool block_inbound_tcp_port(FilterConfig* fltCfg, unsigned int port){
 /// @param fltCfg The filter configuration to use
 /// @param srcIpAddr The source IP address of a packet
 /// @param dstIpAddr The destination IP address of a packet
-static bool packet_is_inbound(FilterConfig* fltCfg, unsigned int srcIpAddr, unsigned int dstIpAddr){
-	if( !(~(fltCfg->mask & destNetwork)) && ~(fltCfg->mask != srcAddr)){
+static bool packet_is_inbound(FilterConfig* fltCfg, unsigned int srcIpAddr,
+													unsigned int dstIpAddr){
+	if( !(~(fltCfg->localMask & dstIpAddr)) && 
+					~(fltCfg->localMask != srcIpAddr)){
 		return true;
 	}
    	return false;
@@ -106,7 +107,8 @@ static bool packet_is_inbound(FilterConfig* fltCfg, unsigned int srcIpAddr, unsi
 /// @param ipAddr The IP address that is to be blocked
 static void add_blocked_ip_address(FilterConfig* fltCfg, unsigned int ipAddr){
 	fltCfg->numBlockedIpAddresses++;
-	realloc(fltCfg->blockedIpAddresses, fltCfg->numBlockedIpAddresses);
+	fltCfg->blockedIpAddresses = realloc(fltCfg->blockedIpAddresses, 
+			fltCfg->numBlockedIpAddresses);
 	assert(fltCfg->blockedIpAddresses);
 	fltCfg->blockedIpAddresses[(fltCfg->numBlockedIpAddresses)-1] = ipAddr;
 }
@@ -117,11 +119,14 @@ static void add_blocked_ip_address(FilterConfig* fltCfg, unsigned int ipAddr){
 /// memory to extend the length of the array that holds the blocked ports.
 /// @param fltCfg The filter configuration to which the TCP port is added
 /// @param port The TCP port that is to be blocked
-static void add_blocked_inbound_tcp_port(FilterConfig* fltCfg, unsigned int port){
+static void add_blocked_inbound_tcp_port(FilterConfig* fltCfg,
+												unsigned int port){
 	fltCfg->numBlockedInboundTcpPorts++;
-	realloc(fltCfg->blockedInboundTcpPorts, fltCfg->numBlockedInboundTcpPorts);
+	fltCfg->blockedInboundTcpPorts = realloc(fltCfg->blockedInboundTcpPorts,
+											fltCfg->numBlockedInboundTcpPorts);
 	assert(fltCfg->blockedInboundTcpPorts);
-	fltCfg->blockedInboundTcpPorts[(numBlockedInboundTcpPorts)-1] = port;
+	fltCfg->blockedInboundTcpPorts[(fltCfg->numBlockedInboundTcpPorts)-1]
+																	= port;
 }
 
 
@@ -131,10 +136,10 @@ static void add_blocked_inbound_tcp_port(FilterConfig* fltCfg, unsigned int port
 IpPktFilter create_filter(void){
    	FilterConfig* filter = NULL;
 
-	filter = malloc(sizeeof(FilterConfig));
+	filter = malloc(sizeof(FilterConfig));
 	filter->localIpAddr = 0;
 	filter->localMask = 0;
-	filter->blockInboundEcoReq = false;
+	filter->blockInboundEchoReq = false;
 	filter->numBlockedInboundTcpPorts = 0;
 	filter->blockedInboundTcpPorts = NULL;
 	filter->numBlockedIpAddresses = 0;
@@ -147,15 +152,14 @@ IpPktFilter create_filter(void){
 /// Destroys an instance of a filter by freeing all of the dynamically
 /// allocated memory associated with the filter.
 /// @param filter The filter that is to be destroyed
-void destroy_filter(IpPktFilter filter)
-{
-   	FilterConfig* fltCfg = filter;
-
-	if(filter->blockedInboundTcpPorts != NULL){
-		free(filter->blockedInboundTcpPorts);
+void destroy_filter(IpPktFilter filter){
+   	FilterConfig* fltCfg = (FilterConfig*) filter;
+	
+	if(fltCfg->blockedInboundTcpPorts != NULL){
+		free(fltCfg->blockedInboundTcpPorts);
 	}
-	if(filter->blockedIpAddresses != NULL){
-		free(filter->blockedIpAddresses);
+	if(fltCfg->blockedIpAddresses != NULL){
+		free(fltCfg->blockedIpAddresses);
 	}
 	free(filter);
 }
@@ -178,7 +182,7 @@ bool configure_filter(IpPktFilter filter, char* filename){
    	bool  validConfig = false;
 
 	FilterConfig* fltCfg = (FilterConfig*)filter;
-
+	
 	//Handle opening File
    	pFile = fopen(filename, "r"); 
    	if(pFile == NULL){
@@ -187,54 +191,56 @@ bool configure_filter(IpPktFilter filter, char* filename){
    	}
 	
 	// Get first line to check
-	fgets(buf, MAX_LINE_LENGTH, pFile);
-
+	success = fgets(buf, MAX_LINE_LEN, pFile);
+	success = fgets(buf, MAX_LINE_LEN, pFile);
+	
 	// Check if first line is "LOCAL_NET:"
-	ptoken = strtok(buf, " ");
-	if(strcmp(ptoken, "LOCAL_NET:")){
+	pToken = strtok(buf, " ");
+	if(strcmp(pToken, "LOCAL_NET:") == 0){
 		validConfig = true;
 	}
+	
 	//If not "LOCAL_NET:", error out & return false
   	if(validConfig == false){
-      	fprintf(stderr, "Error, configuration file must set LOCAL_NET\n");
+      	fprintf(stderr, "Error, configuration file must set LOCAL_NET");
    		fclose(pFile);
 		return false;
 	}
 
 	// If "LOCAL_NET:" is found, sore the data
-	parse_remainder_of_string_for_ip(fltCfg->localIpAddr);
+	parse_remainder_of_string_for_ip(&(fltCfg->localIpAddr));
 	
 	// Parse local mask	
-	ptoken = strtok(NULL, "\n");
-	int bitMask = strtol(ptoken, NULL, 10);
+	pToken = strtok(NULL, "\n");
+	int bitMask = strtol(pToken, NULL, 10);
 	if(bitMask == 8){
-		fltCfg->mask = (fltCfg->localIpAddr) & 0xFF000000;
+		fltCfg->localMask = (fltCfg->localIpAddr) & 0xFF000000;
 	}
 	else if(bitMask == 16){
-		fltCfg->mask = (fltCfg->localIpAddr) & 0xFFFF0000;
+		fltCfg->localMask = (fltCfg->localIpAddr) & 0xFFFF0000;
 	}
 	else if(bitMask == 24){
-		fltCfg->mask = (fltCfg->localIpAddr) & 0xFFFFFF00;
+		fltCfg->localMask = (fltCfg->localIpAddr) & 0xFFFFFF00;
 	}
 	else if(bitMask == 32){
-		fltCfg->mask = (fltCfg->localIpAddr) & 0xFFFFFFFF; 	
+		fltCfg->localMask = (fltCfg->localIpAddr) & 0xFFFFFFFF; 	
 	}
 	
 	//Get main configurations
 	while(fgets(buf, MAX_LINE_LEN, pFile) != NULL){
 		if(strcmp(buf, "")){
-			ptoken = strtok(buf, " ");
-			if(!strcmp(ptoken, "BLOCK_INBOUND_TCP_PORT:")){
+			pToken = strtok(buf, " ");
+			if(!strcmp(pToken, "BLOCK_INBOUND_TCP_PORT:")){
 				char* temp = strtok(NULL, "\n");
 				unsigned int newTcp = strtol(temp, NULL, 10);
 				add_blocked_inbound_tcp_port(fltCfg, newTcp);
 			}
-			else if(!strcmp(ptoken, "BLOCK_IP_ADDR:")){
+			else if(!strcmp(pToken, "BLOCK_IP_ADDR:")){
 				unsigned int newBlockIp;
 				parse_remainder_of_string_for_ip(&newBlockIp);
-				add_blocked_ip_address(cfg, newBlockIp);
+				add_blocked_ip_address(fltCfg, newBlockIp);
 			}
-			else if(!strcmp(ptoken, "BLOCK_PING_REQ")){
+			else if(!strcmp(pToken, "BLOCK_PING_REQ")){
 				fltCfg->blockInboundEchoReq	= true;			
 			}
 		}
@@ -263,9 +269,8 @@ bool filter_packet(IpPktFilter filter, unsigned char* pkt){
 	srcIpAddr = ExtractSrcAddrFromIpHeader(pkt);
 	dstIpAddr = ExtractDstAddrFromIpHeader(pkt);
 	
-	unsigned int ipProtocol = extractIpProtocol(pkt);
+	unsigned int ipProtocol = ExtractIpProtocol(pkt);
 	unsigned int tcp;
-	unsigned int icmp;
 	
 	if(!packet_is_inbound(fltCfg, srcIpAddr, dstIpAddr)){
 		return false;
@@ -279,12 +284,11 @@ bool filter_packet(IpPktFilter filter, unsigned char* pkt){
 	}
 
 	if(ipProtocol == IP_PROTOCOL_ICMP){
-		icmp = ExtractIcmpType(pkt);
-		if(fltCfg->blockInbounfEchoReq){
+		if(fltCfg->blockInboundEchoReq){
 			return false;
 		}
 	}
 	
-  	return vlock_ip_address(fltCfg, srcIpAddr);
+  	return block_ip_address(fltCfg, srcIpAddr);
 }
 

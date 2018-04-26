@@ -170,10 +170,12 @@ static int read_packet(FILE * in_pipe, unsigned char* buf, int buflen ){
    	int len_read = -1; // assume error
 	
 	// Get numBytes
-	numRead = fread(&numBytes, 4, 1, in_pipe);
+	numRead = fread(buf, sizeof(unsigned int), 1, in_pipe);
+	numBytes = strtol(buf, NULL, 10);
 	
 	if(numBytes > buflen){
-		fprintf(stderr, "Packet is too long!\n");
+		fprintf(stderr, "Packet is too long\tnumBytes: %d   buflen: %d\n",
+								numBytes, buflen);
 		return EXIT_FAILURE;
 	}
 	
@@ -182,9 +184,11 @@ static int read_packet(FILE * in_pipe, unsigned char* buf, int buflen ){
 
 	// Iterate over numBytes
 	for(int i = 0; i < numBytes; i++){
-		numRead = fread(&buf[i], 1, 1, in_pipe);
+		numRead = fread(&buf[i], 1, sizeof(char), in_pipe);
 		len_read++;
 	}
+	
+	printf("Successfully read packet: \"%s\"\n", buf);
 	
    	return len_read;
 }
@@ -211,6 +215,7 @@ static void * filter_thread(void* args){
 	open_pipes(spec_p);
 	
 	while(NOT_CANCELLED != 0){
+		fprintf(stderr, "Entering read loop\n");
 		status = EXIT_SUCCESS;
 		length = read_packet((spec_p->pipes).in_pipe, pktBuf, MAX_PKT_LENGTH);
 	
@@ -218,8 +223,10 @@ static void * filter_thread(void* args){
 		switch(MODE){
 			case MODE_BLOCK_ALL:
 				allow = false;
+				break;
 			case MODE_ALLOW_ALL:
 				allow = true;
+				break;
 			case MODE_FILTER:
 				allow = filter_packet(spec_p->filter, pktBuf);
 		}
@@ -241,7 +248,6 @@ static void * filter_thread(void* args){
 
    	pthread_exit( &status);
 }
-
 
 /// Displays a prompt to stdout and menu of commands that a user can choose
 static void display_menu(void)
@@ -284,36 +290,36 @@ int main(int argc, char* argv[]){
 		fprintf(stderr, "Error reading from config file\n");
 		return EXIT_FAILURE;
 	}
-	
+
 	fw_spec.config_file = argv[1];
-	fw_spec.in_file = "toFirewall";
-	fw_spec.out_file = "fromFirewall";
+	fw_spec.in_file = "ToFirewall";
+	fw_spec.out_file = "FromFirewall";
 	fw_spec.filter = filter;
 	Pipes_T pipes;
 	fw_spec.pipes = pipes;
 	pthread_create(&tid_filter, NULL, filter_thread, (void*)&fw_spec);
 		
 	while((ferror = fgets(buf, 256, stdin)) != NULL){
-		if(strcmp(buf, "0") == 0){
+		if(strcmp(buf, "0\n") == 0){
 			//Input was "0" (EXIT)
 			NOT_CANCELLED = 0;
 			printf("Exiting\n");
 			break;
-		} else if(strcmp(buf, "1") == 0){
+		} else if(strcmp(buf, "1\n") == 0){
 			//Input was "1" (BLOCK)
 			MODE = MODE_BLOCK_ALL;
 			printf("Switching to blocking mode\n");
-		} else if(strcmp(buf, "2") == 0) {
+		} else if(strcmp(buf, "2\n") == 0) {
 			//Input was "2" (ALLOW)
 			MODE = MODE_ALLOW_ALL;
 			printf("Switching to allow mode\n");
-		} else if(strcmp(buf, "3") == 0) {
+		} else if(strcmp(buf, "3\n") == 0) {
 			//Input was "3" (Filter)
 			MODE = MODE_FILTER;
 			printf("Switching to filtering mode\n");
 		} else{
 			//Input was not a known value
-			printf("Unknown argument\n");
+			printf("Unknown argument: \"%s\"\n", buf);
 		}
 	}
 		
