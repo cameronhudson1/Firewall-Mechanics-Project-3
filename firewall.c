@@ -170,25 +170,20 @@ static int read_packet(FILE * in_pipe, unsigned char* buf, int buflen ){
    	int len_read = -1; // assume error
 	
 	// Get numBytes
-	numRead = fread(buf, sizeof(unsigned int), 1, in_pipe);
-	numBytes = strtol(buf, NULL, 10);
+	numRead = fread(&numBytes, 4, 1, in_pipe);
 	
 	if(numBytes > buflen){
-		fprintf(stderr, "Packet is too long\tnumBytes: %d   buflen: %d\n",
-								numBytes, buflen);
+		fprintf(stderr, "Packet is too long\n", numBytes, buflen);
 		return EXIT_FAILURE;
 	}
 	
-	numBytes++;
 	len_read++;	
-
+	
 	// Iterate over numBytes
 	for(int i = 0; i < numBytes; i++){
-		numRead = fread(&buf[i], 1, sizeof(char), in_pipe);
+		numRead = fread(&buf[i], sizeof(char), 1, in_pipe);
 		len_read++;
 	}
-	
-	printf("Successfully read packet: \"%s\"\n", buf);
 	
    	return len_read;
 }
@@ -212,10 +207,10 @@ static void * filter_thread(void* args){
    	status = EXIT_FAILURE; // reset
 
    	FWSpec_T* spec_p = (FWSpec_T*)args;
+	
 	open_pipes(spec_p);
 	
 	while(NOT_CANCELLED != 0){
-		fprintf(stderr, "Entering read loop\n");
 		status = EXIT_SUCCESS;
 		length = read_packet((spec_p->pipes).in_pipe, pktBuf, MAX_PKT_LENGTH);
 	
@@ -233,11 +228,12 @@ static void * filter_thread(void* args){
 		
 		//If the packet is allowed, write it
 		if(allow){
-			fwrite(pktBuf, 1, length, (spec_p->pipes).out_pipe);
+			fwrite(&length, sizeof(unsigned int), 1, (spec_p->pipes).out_pipe);
+			for(int i = 0; i < length; i++){
+				fwrite(&pktBuf[i], 1, 1, (spec_p->pipes).out_pipe);
+				fflush((spec_p->pipes).out_pipe);
+			}
 		}
-		
-		fflush((spec_p->pipes).in_pipe);
-		fflush((spec_p->pipes).out_pipe);
 	}
 	
 	// end of thread is never reached when there is a cancellation.
@@ -290,7 +286,7 @@ int main(int argc, char* argv[]){
 		fprintf(stderr, "Error reading from config file\n");
 		return EXIT_FAILURE;
 	}
-
+	
 	fw_spec.config_file = argv[1];
 	fw_spec.in_file = "ToFirewall";
 	fw_spec.out_file = "FromFirewall";
@@ -304,6 +300,7 @@ int main(int argc, char* argv[]){
 			//Input was "0" (EXIT)
 			NOT_CANCELLED = 0;
 			printf("Exiting\n");
+			pthread_cancel(tid_filter);
 			break;
 		} else if(strcmp(buf, "1\n") == 0){
 			//Input was "1" (BLOCK)
@@ -317,9 +314,6 @@ int main(int argc, char* argv[]){
 			//Input was "3" (Filter)
 			MODE = MODE_FILTER;
 			printf("Switching to filtering mode\n");
-		} else{
-			//Input was not a known value
-			printf("Unknown argument: \"%s\"\n", buf);
 		}
 	}
 		
